@@ -1,35 +1,43 @@
+# --- LangGraph Core ---
 langgraph
 langgraph-sdk
 langgraph-checkpoint-sqlite
-langsmith
-langchain-community
+langgraph-cli[inmem]
+
+# --- LangChain ---
 langchain-core
 langchain-openai
-notebook
-tavily-python
-wikipedia
-trustcall
-langgraph-cli[inmem]
-# requirements file
-# note which revision of python, for example 3.9.6
-# in this file, insert all the pip install needs, include revision
+langchain-ollama
+langchain-anthropic
+langchain-community
 
-#for example:
-#torch==2.0.1
-numpy==1.26.3
+# --- LLM y modelos ---
+ollama
+llama-index>=0.11.0
+
+# --- Phoenix y OpenInference ---
+arize-phoenix
+arize-phoenix-otel
+openinference-instrumentation
+openinference-instrumentation-langchain
+openinference-instrumentation-openai
+openinference-instrumentation-llama_index
+
+# --- Evaluación y visualización ---
+ipywidgets
 matplotlib
+tqdm
+wikipedia
 
-openinference-instrumentation==0.1.21
-arize-phoenix-otel==0.7.1
-arize-phoenix==7.0.0
-openai==1.54.5
-httpx<0.28
-openinference-instrumentation-openai==0.1.18
+# --- SQL y almacenamiento ---
+sqlalchemy
+aiosqlite
+duckdb
 
-
-sqlalchemy==2.0.36
-aiosqlite==0.20.0
-tqdm==4.65.0
-duckdb==1.1.3
-
+# --- Utilidades ---
+notebook
 python-dotenv
+httpx
+numpy
+trustcall
+openai

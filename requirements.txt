@@ -27,7 +27,6 @@ openinference-instrumentation-llama_index
 ipywidgets
 matplotlib
 tqdm
-wikipedia
 
 # --- SQL y almacenamiento ---
 sqlalchemy

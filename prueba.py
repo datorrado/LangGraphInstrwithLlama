@@ -2,28 +2,17 @@
 # coding: utf-8
 
 # # Evaluation of the agent (VisualAgent)
-
-
-
-# In[2]:
-
-
-import warnings
-warnings.filterwarnings('ignore')
-
-
-# In[3]:
-
-
-# === Base ===
+from tqdm import tqdm
+from phoenix.evals import llm_classify, TOOL_CALLING_PROMPT_TEMPLATE, PromptTemplate, LiteLLMModel
+from litellm import completion
+from phoenix.trace import SpanEvaluations
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
+from opentelemetry import trace
 import os
 import json
 import pandas as pd
-from tqdm import tqdm
-
 # === Phoenix core ===
 import phoenix as px
-from phoenix.trace import SpanEvaluations
 from phoenix.trace.dsl import SpanQuery
 
 # === Evaluaciones automáticas ===
@@ -32,134 +21,15 @@ from phoenix.evals import (
     llm_classify,
     PromptTemplate,
 )
-
-
-# === LLM local (ej. llama.cpp o llamafile) ===
-#from phoenix.evals.models import 
-
-# === Extra ===
 from openinference.instrumentation import suppress_tracing
 import nest_asyncio
 nest_asyncio.apply()
 import pprint
-
-
-# In[4]:
-
+import warnings
+warnings.filterwarnings('ignore')
 
 os.environ['OLLAMA_API_BASE']= 'http://localhost:11434'
-
-
-# In[5]:
-
-
 PROJECT_NAME = "evaluating-agent"
-
-
-# In[6]:
-
-
-#from utils_copy import run_graph_with_tracing
-
-
-# In[7]:
-
-
-'''from phoenix.evals.models import BaseModel
-from typing import Optional, Sequence, Union, Any
-from langchain_ollama import ChatOllama
-import asyncio'
-'''
-
-from phoenix.evals import llm_classify, TOOL_CALLING_PROMPT_TEMPLATE, PromptTemplate, LiteLLMModel
-from litellm import completion
-
-
-# In[8]:
-
-
-# === Correct Phoenix Trace Querying ===
-from phoenix.trace import SpanEvaluations
-
-# Define evaluation queries properly
-def get_sql_query(run_id):    
-    sql_query = (
-        SpanQuery()
-        .where(f"name == 'sql_query_gen' and agentrun_id == '{run_id}'")
-    ).select(
-        question="input.value",
-        query_gen="output.value",
-    )
-    return sql_query
-
-def get_analysis_query(run_id):
-    analysis_query = (
-        SpanQuery()
-        .where(f"name == 'data_analysis' and agentrun_id == '{run_id}'")
-    ).select(
-        query="input.value",
-        response="output.value",
-    )
-    return analysis_query
-
-def get_viz_query(run_id):
-    viz_query = (
-        SpanQuery()
-        .where(f"name == 'gen_visualization' and agentrun_id == '{run_id}'")
-    ).select(
-        input="input.value",
-        generated_code="output.value",
-    )
-    return viz_query
-
-def get_decision_query(run_id):
-    decide_query = (
-        SpanQuery()
-        .where(f"span_kind == 'TOOL' and agentrun_id == '{run_id}'")
-    ).select(
-        question="input.value",
-        tool_call="output.value",
-    )
-    return decide_query
-
-# Create loop to see multiple times the difference in the "re-runs"
-# 1. Use multiple type of prompts styles for testing
-# 2. Human in the loop?
-
-# 1. complete
-# 2. How to save a csv file with the output of the traces.
-# 3. Try to make a decision based on different branches and parallelization
-# 4. cook up a docker container
-# 5. Try access with the server
-
-# In[ ]:
-
-
-agent_questions = [
-    "What was the most popular product SKU?",
-    "What was the total revenue across all stores?",
-    "Which store had the highest sales volume?",
-    "Create a bar chart showing total sales by store",
-    "What was the average transaction value?"
-]
-
-"""for question in tqdm(agent_questions, desc="Processing questions"):
-    try:
-        input_state = {
-            "prompt": question,
-        }
-        ret = run_graph_with_tracing(input_state)
-    except Exception as e:
-        print(f"Error processing question: {question}")
-        print(e)
-        continue
-"""
-
-# ### Prompts for evaluation of the tools
-# 
-
-# In[64]:
-
 
 # === SQL Generation Evaluation ===
 SQL_EVAL_GEN_PROMPT = """
@@ -228,10 +98,6 @@ Configuration: {output}
 Respond with "good" or "poor" and a brief reason.
 """)
 
-
-# In[10]:
-
-
 tools = [
     {
         "name": "lookup_sales_data",
@@ -246,26 +112,6 @@ tools = [
         "description": "Generates a visualization schema of the data processed according to the user's configuration."
     }
 ]
-
-
-# #### Evaluators 
-
-# In[11]:
-
-
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
-from opentelemetry import trace
-
-# Añade exportador a consola para debug
-##trace.get_tracer_provider().add_span_processor(
-    #SimpleSpanProcessor(ConsoleSpanExporter())
-#)
-
-
-# In[29]:
-
-
-from litellm import completion
 
 model = LiteLLMModel(model="ollama_chat/llama3.2:3B")
 input_state = {"prompt": "Show me sales in Nov 2021"}
@@ -363,8 +209,6 @@ def analysis_eval(run_id):
     return clarity_eval
 
 
-
-# In[17]:
 
 
 # === Visualization Evaluation ===

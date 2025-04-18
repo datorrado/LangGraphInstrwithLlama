@@ -14,6 +14,7 @@ langchain-community
 # --- LLM y modelos ---
 ollama
 llama-index>=0.11.0
+litellm
 
 # --- Phoenix y OpenInference ---
 arize-phoenix

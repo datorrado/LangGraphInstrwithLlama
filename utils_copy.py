@@ -74,6 +74,8 @@ class State (TypedDict):
     used_tools: NotRequired[list[str]]
     temperature: float
     id: str # Para almacenar el UUID de la ejecución
+    table_name: str
+    columns: list[str]
 
 #Define the state for the subgraph used for parallelization 
 class SubgraphState (TypedDict):
@@ -113,11 +115,11 @@ WHERE CAST(date_column AS VARCHAR) LIKE '%2021-11%'
 """
 
 #Tool for sql query generation
-def generate_sql_query (state:State, columns: list, table_name: str): 
+def generate_sql_query (state:State): 
     # Formateamos el prompt para generar la consulta SQL
 
     temperature = state.get("temperature", 0.1)
-    formatted_prompt = SQL_Generation_Prompt.format(prompt=state["prompt"], columns=columns, table_name=table_name)
+    formatted_prompt = SQL_Generation_Prompt.format(prompt=state["prompt"], columns=state["columns"], table_name=["table_name"])
     localLLM=ChatOllama(model="llama3.2:3b", temperature=temperature, streaming=True)
     
     # Aquí invocamos LLaMA para generar la consulta SQL
@@ -140,26 +142,20 @@ def generate_sql_query (state:State, columns: list, table_name: str):
     except Exception as e:
         return {**state, "error": f"Error accessing data: {str(e)}"}
 
-"""def parallel_sql_gen(state:State, columns: list, table_name: str):
+def parallel_sql_gen(state:State):
     temperatures = [0.1, 0.45, 0.8]
 
     substates = [{**state, "temperature": temp} for temp in temperatures]
     
     results = []
-    with ThreadPoolExecutor() as executor:
-        futures = [
-            executor.submit(generate_sql_query, substate, columns, table_name)
-            for substate in substates
-        ]
-        for future in as_completed(futures):
-            try:
-                result = future.result()
-                if isinstance(result, str):  # solo strings válidos
-                    results.append(result)
-            except Exception as e:
-                print(f"[ERROR] SQL generation failed: {e}")
-    
-    return results"""
+    subgraph = StateGraph(State)
+    subgraph.add_node("generate_sql_query", generate_sql_query)
+    subgraph.set_entry_point("generate_sql_query")
+    subgraph.set_finish_point("generate_sql_query")
+    subgraph = subgraph.compile()
+    results= list(subgraph.batch_as_completed(inputs=substates))
+
+    return results
 
 @tracer.tool()
 def lookup_sales_data(state:State):
@@ -170,7 +166,7 @@ def lookup_sales_data(state:State):
 
         # define the table name
         table_name = "sales"
-        
+        state["table_name"] = table_name
         # step 1: read the parquet file into a DuckDB table
         df = pd.read_parquet(TRANSACTION_DATA_FILE_PATH)
         print("Este es el dataframe: "+str(df.head()))
@@ -178,25 +174,12 @@ def lookup_sales_data(state:State):
         duckdb.sql(f"CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM df")
         # step 2: generate the SQL code 
         columns = list(df.columns)
+        state["columns"] = columns
         #print("Estas son las columnas: "+str(columns))
         date_columns = df.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns
-        temperatures = [0.1, 0.45, 0.8]
-
-        substates = [{**state, "temperature": temp} for temp in temperatures]
     
-        results = []
-        with ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(generate_sql_query, substate, columns, table_name)
-                for substate in substates
-            ]
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    if isinstance(result, str):  # solo strings válidos
-                        results.append(result)
-                except Exception as e:
-                    print(f"[ERROR] SQL generation failed: {e}")
+        results = parallel_sql_gen(state)
+
         #sql_queries = parallel_sql_gen(state, columns, table_name)
             #print("Este es el sql query: "+str(sql_queries))
             # clean the response to make sure it only includes the SQL code

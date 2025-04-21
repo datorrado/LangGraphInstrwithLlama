@@ -1,8 +1,5 @@
 from dotenv import find_dotenv, load_dotenv
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import langgraph
-import langgraph.version
-print(langgraph.version)
+from codecarbon import EmissionsTracker
 from pydantic import BaseModel, Field
 from openinference.instrumentation.langchain import LangChainInstrumentor
 from opentelemetry.trace import Status, StatusCode
@@ -15,6 +12,7 @@ import json
 import duckdb
 import pandas as pd
 from datetime import datetime
+import logging
 ##from pydantic import BaseModel, Field
 from IPython.display import Markdown
 
@@ -32,7 +30,14 @@ import operator
 import os
 from opentelemetry.trace import StatusCode
 import uuid
+
 from prueba import decide_tool_eval, analysis_eval, visualization_eval, sql_eval
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import langgraph
+import langgraph.version
+print(langgraph.version)
+
 
 
 PHOENIX_API_KEY = "8ec6bad84d31d641610:789d473"
@@ -60,6 +65,17 @@ llm = ChatOllama(model="llama3.2:3b", temperature=0.1, streaming=True)
 TRANSACTION_DATA_FILE_PATH = 'data/Store_Sales_Price_Elasticity_Promotions_Data.parquet'
 
 
+codecarbon_logger = logging.getLogger("codecarbon")
+
+codecarbon_logger.setLevel(logging.NOTSET)
+
+
+for handler in codecarbon_logger.handlers[:]:
+    codecarbon_logger.removeHandler(handler)
+
+null_handler = logging.NullHandler()
+codecarbon_logger.addHandler(null_handler)
+
 
 # Define the state of the agent's main graph
 class State (TypedDict):
@@ -76,20 +92,13 @@ class State (TypedDict):
     id: str # Para almacenar el UUID de la ejecución
     table_name: str
     columns: list[str]
+    energy_lookup_sales_data: NotRequired[float]
+    energy_analyzing_data: NotRequired[float]
+    energy_create_visualization: NotRequired[float]
+    energy_decide_tool: NotRequired[list[float]]
 
 #Define the state for the subgraph used for parallelization 
-class SubgraphState (TypedDict):
-    prompt: str
-    data: str
-    tool_choice: str
-    answer_so_far: list[str]
-    results: Annotated[list[str], operator.add]
 
-class SQLState(TypedDict):
-    prompt: str
-    table_name: str
-    columns: list[str]
-    sql_query: str
 
 SQL_Generation_Prompt = """ 
 "Generate an SQL query based on the prompt. Please just reply with the SQL query and NO MORE, just the query. Really there is no need to create any comment besides the query, that's the only important thing. The prompt is : {prompt}" \
@@ -160,7 +169,8 @@ def parallel_sql_gen(state:State):
 @tracer.tool()
 def lookup_sales_data(state:State):
     """Implementation of sales data lookup from parquet file using SQL"""
-    #substates = [{**state, "temperature": temp} for temp in [0.1, 0.45, 0.8]]
+    tracker = EmissionsTracker(project_name="lookup_sales_data", measure_power_secs=1)
+    tracker.start()
 
     try:
 
@@ -217,6 +227,9 @@ def lookup_sales_data(state:State):
             # step 3: execute the SQL query
             span.set_output(final_result)
             span.set_status(StatusCode.OK)
+
+        emissions = tracker.stop()
+        state["energy_lookup_sales_data"] = emissions
         #print("Resultado de lookup_sales_data:", result) 
         return {**state, "data": final_result, "answer": state.get("answer", []) + ["The query to create the dataframe is the following: "+sql_query+"\n"], "used_tools": state.get("used_tools", []) + ["lookup_sales_data"], "id": state.get("id")}
     except Exception as e:
@@ -262,6 +275,8 @@ def split_prompt(emphasis: str) -> list[str]:
 
 @tracer.tool()
 def parallel_analyze_data(state: State) -> State:
+    tracker = EmissionsTracker(project_name="analyze_data", measure_power_secs=1)
+    tracker.start()
     sub_prompts = split_prompt(state["prompt"])
 
     # Construimos estados individuales para cada subanalisis
@@ -285,7 +300,8 @@ def parallel_analyze_data(state: State) -> State:
     analysis_outputs = [r[1]['analyze_data'] for r in results]
     final_summary = fuse_analysis_results(analysis_outputs)
 
-
+    emissions = tracker.stop()
+    state["energy_analyzing_data"] = emissions
     return {
         **state,
         "analyze_data": final_summary,
@@ -380,6 +396,8 @@ def create_chart(state: State):
         return {**state, "error": f"Error accessing data: {str(e)}"}
 @tracer.tool()
 def create_visualization(state: State) -> State:
+    tracker = EmissionsTracker(project_name="create_visualization", measure_power_secs=1)
+    tracker.start()
     try:
         config = extract_chart_config(state)
         code = create_chart(config)
@@ -394,17 +412,25 @@ def create_visualization(state: State) -> State:
             span.set_output(code)
             span.set_status(StatusCode.OK)
             
-            return {**state, "config": config["chart_config"], 
+        emissions = tracker.stop()
+        state["energy_create_visualization"] = emissions
+        return {**state, "config": config["chart_config"], 
             "visualization_goal": config.get("visualization_goal"),
             "chart_config": config.get("chart_config"), 
             "analyze_data": state.get("analyze_data"), "answer": state.get("answer", []) + ["This is the code to visualize: "+code], "used_tools": state.get("used_tools", []) + ["create_visualization"], "id": state.get("id")}
     except Exception as e:
-            return {**state, "error": f"Error accessing data: {str(e)}"}
+        return {**state, "error": f"Error accessing data: {str(e)}"}
 
 
 @tracer.tool()
 def decide_tool(state: State, llm) -> State:
+    if "energy_decide_tool" not in state:
+        state["energy_decide_tool"] = []
+    
+    state["energy_lookup_sales_data"] = state.get("energy_lookup_sales_data")
 
+    tracker = EmissionsTracker(project_name="decide_tool", measure_power_secs=1)
+    tracker.start()
     used_tools= state.get("used_tools", [])
     tools_description = """You have access to the following tools:
     - lookup_sales_data: Retrieve raw sales data. (Must be run first)
@@ -492,8 +518,10 @@ def decide_tool(state: State, llm) -> State:
         span.set_input(state["prompt"])
         span.set_output(matched_tool)
 
-    print(f"Elección de herramienta: {matched_tool}")
+    #print(f"Elección de herramienta: {matched_tool}")
 
+    emissions = tracker.stop()
+    state["energy_decide_tool"].append(emissions)
     # Actualizamos el estado; registramos la herramienta elegida
     return {**state,
             "prompt": state["prompt"],
@@ -548,13 +576,19 @@ graph.add_edge("create_visualization", "decide_tool")
 graph = graph.compile()
 
 
-def log_evaluation_to_csv(eval_df: pd.DataFrame, tool_name: str, file_path: str = "tool_evaluations.csv"):
+def log_evaluation_to_csv(eval_df: pd.DataFrame, tool_name: str, file_path: str = "tool_evaluations.csv", energy=None):
     eval_df["tool_name"] = tool_name
     eval_df["timestamp"] = datetime.now().isoformat()
-    eval_df["energy_estimate_Ws"] = None  # En el futuro lo puedes llenar
+    if isinstance(energy, list) and len(energy) == len(eval_df):
+        eval_df["energy_kwh"] = energy
+        print("Energy values added to DataFrame")
+    elif isinstance(energy, float):
+        eval_df["energy_kwh"] = energy
+    else:
+        eval_df["energy_kwh"] = None
 
     # Reordenar columnas si quieres
-    cols_order = ["tool_name", "context.span_id", "timestamp", "execution_seconds", "score", "label", "explanation", "energy_estimate_Ws"]
+    cols_order = ["tool_name", "context.span_id", "timestamp", "execution_seconds", "score", "label", "explanation", "energy_kwh"]
     for col in cols_order:
         if col not in eval_df.columns:
             eval_df[col] = None
@@ -586,9 +620,9 @@ def run_graph_with_tracing(input_state):
             id = str(id).strip()
             print("Este es el id: "+str(id))
             log_evaluation_to_csv(sql_eval(id), "lookup_sales_data")
-            log_evaluation_to_csv(analysis_eval(id), "analyzing_data")
-            log_evaluation_to_csv(visualization_eval(id), "create_visualization")
-            log_evaluation_to_csv(decide_tool_eval(id), "decide_tool")
+            log_evaluation_to_csv(analysis_eval(id), "analyzing_data", energy=result["energy_analyzing_data"])
+            log_evaluation_to_csv(visualization_eval(id), "create_visualization", energy=result["energy_create_visualization"])
+            log_evaluation_to_csv(decide_tool_eval(id), "decide_tool",  energy=result["energy_decide_tool"])
             return result
         except Exception as e:
             span.set_status(StatusCode.ERROR)

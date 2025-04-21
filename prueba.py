@@ -121,7 +121,7 @@ input_state = {"prompt": "Show me sales in Nov 2021"}
 def decide_tool_eval(run_id):
     decide_query = (
         SpanQuery()
-        .where(f"span_kind == 'TOOL' and agentrun_id == '{run_id}'")
+        .where(f"name == 'tool_choice' and span_kind == 'TOOL' and agentrun_id == '{run_id}'")
     ).select(
         question="input.value",
         tool_call="output.value",

@@ -1,0 +1,1 @@
+Here we have a folder containing the new updates of the utils file, every single one of them containing parallelism with a different number of nodes. At the same time, finally, there is a proper recollection of metrics related to energy and utilization

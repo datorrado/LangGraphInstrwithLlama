@@ -15,6 +15,7 @@ import json
 import duckdb
 import pandas as pd
 from datetime import datetime
+import subprocess
 import logging
 ##from pydantic import BaseModel, Field
 from IPython.display import Markdown
@@ -108,7 +109,7 @@ class State (TypedDict):
     ids_decide_tool: NotRequired[list[str]]
     energy_lookup_sales_data: NotRequired[list[float]]
     energy_analyzing_data: NotRequired[list[float]]
-    energy_create_visualization: NotRequired[list[float]]
+    energy_create_visualization: NotRequired[float]
     energy_decide_tool: NotRequired[list[float]]
     cpu_utilization_lookup_sales_data: NotRequired[float]
     cpu_utilization_analyzing_data: NotRequired[float]
@@ -128,56 +129,70 @@ class State (TypedDict):
 #Define the state for the subgraph used for parallelization 
 
 class CPU_GPU_Tracker:
-    def __init__(self, interval=5.0):
+    def __init__(self, interval=1):
         self.cpu_usage = []
         self.gpu_usage = []
         self.cpu_median = None
         self.gpu_median = None
+        self.cpu_mean = None
+        self.gpu_mean = None
         self.running = False
         self.interval = interval
 
     def update_median(self):
-        """Actualiza los valores de la mediana de CPU y GPU."""
-
+        """Updates the median CPU and GPU utilization values."""
         self.cpu_median = median(self.cpu_usage) if self.cpu_usage else None
         self.gpu_median = median(self.gpu_usage) if self.gpu_usage else None
 
+    def mean(self):
+        """Calculates the mean CPU and GPU utilization."""
+        self.cpu_mean = sum(self.cpu_usage) / len(self.cpu_usage) if self.cpu_usage else None
+        self.gpu_mean = sum(self.gpu_usage) / len(self.gpu_usage) if self.gpu_usage else None
+
     def start(self):
-        """Inicia el seguimiento de la utilización de CPU y GPU."""
+        """Starts tracking CPU and GPU utilization."""
         self.running = True
-        nvmlInit()  # Inicializa NVML para la GPU
         self._track()
 
     def stop(self):
-        """Detiene el seguimiento y devuelve los datos recopilados."""
+        """Stops tracking and returns collected data."""
         self.running = False
         self.update_median()
-        nvmlShutdown()  # Finaliza NVML
+        self.mean()
         return {
             "cpu_usage": self.cpu_usage,
             "gpu_usage": self.gpu_usage,
             "cpu_median": self.cpu_median,
             "gpu_median": self.gpu_median,
+            "cpu_mean": self.cpu_mean,
+            "gpu_mean": self.gpu_mean,
         }
 
     def _track(self):
-        """Método interno para rastrear la utilización de CPU y GPU en un hilo separado."""
+        """Internal method to track CPU and GPU utilization in a separate thread."""
         def track():
             while self.running:
-                # Seguimiento de la CPU
-                self.cpu_usage.append(psutil.cpu_percent(interval=self.interval))
-                gpu_count = nvmlDeviceGetCount()
-                # Seguimiento de la GPU
-                total_gpu = 0
-                for i in range(gpu_count):
-                    handle = nvmlDeviceGetHandleByIndex(i)  # Use the current index for GPU
-                    gpu_util = nvmlDeviceGetUtilizationRates(handle)
-                    total_gpu += gpu_util.gpu
-                self.gpu_usage.append(total_gpu)
+                # CPU tracking 
+                try:
+                    cpu_utilization = psutil.cpu_percent(interval=self.interval)
+                    self.cpu_usage.append(cpu_utilization)
+                except ValueError:
+                    print("Error parsing CPU utilization")
 
-                time.sleep(self.interval)  # Intervalo de muestreo
+                # GPU tracking using nvidia-smi
+                result = subprocess.run(
+                    ["nvidia-smi", "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    gpu_utilization = [int(util) for util in result.stdout.strip().split("\n")]
+                    avg_gpu_utilization = sum(gpu_utilization) / len(gpu_utilization)
+                    self.gpu_usage.append(avg_gpu_utilization)
+                else:
+                    print("Error running nvidia-smi")
 
-        
+                #time.sleep(self.interval)  # Sampling interval
+
         threading.Thread(target=track, daemon=True).start()
 
 
@@ -221,7 +236,7 @@ def generate_sql_query (state:State):
     state["query_id"] = uuid.uuid4().hex[:8]
     utils = CPU_GPU_Tracker(interval=2.0)
     utils.start()
-    tracker = EmissionsTracker(project_name=state["query_id"], measure_power_secs=1, log_level="critical", output_file=f"emissions_{state['id']}.csv", output_dir="10node")
+    tracker = EmissionsTracker(project_name="lookup_sales_data",experiment_id=state["query_id"], measure_power_secs=1, log_level="critical", output_file=f"emissions_{state['id']}_{state['query_id']}.csv", output_dir="10node")
     tracker.start()
     temperature = state.get("temperature", 0.1)
     formatted_prompt = SQL_Generation_Prompt.format(prompt=state["prompt"], columns=state["columns"], table_name=state["table_name"])
@@ -246,7 +261,7 @@ def generate_sql_query (state:State):
         emissions = tracker.stop()
         utils.stop()
 
-        return {"sql_queries": sql_query, "energy_query": emissions, "query_id": state["query_id"], "cpu_query": utils.cpu_median, "gpu_query": utils.gpu_median}
+        return {"sql_queries": sql_query, "energy_query": emissions, "query_id": state["query_id"], "cpu_query": utils.cpu_mean, "gpu_query": utils.gpu_mean}
     except Exception as e:
         return {**state, "error": f"Error accessing data: {str(e)}"}
 
@@ -365,7 +380,7 @@ If you feel the need to say something about code, just stick to explain the arch
 @tracer.tool()
 def analyzing_data(state: State) -> State:
     state["analysis_id"] = str(uuid.uuid4().hex[:8])
-    tracker = EmissionsTracker(project_name=state["analysis_id"], measure_power_secs=1, log_level="critical", output_file=f"emissions_{state['id']}.csv", output_dir="10node")
+    tracker = EmissionsTracker(project_name="analyzing_data", experiment_id=state["analysis_id"], measure_power_secs=1, log_level="critical", output_file=f"emissions_{state['id']}_{state['analysis_id']}.csv", output_dir="10node")
     utils = CPU_GPU_Tracker()
     utils.start()
     tracker.start()
@@ -385,7 +400,7 @@ def analyzing_data(state: State) -> State:
             span.set_status(StatusCode.OK)
         utils.stop()
         return {**state, "analyze_data": analysis_result, "answer": state.get("answer", []) + [analysis_result],         "visualization_goal": state.get("visualization_goal"),
-        "chart_config": state.get("chart_config"), "used_tools": state.get("used_tools", []) + ["analyzing_data"], "id": state.get("id"), "energy_analysis": tracker.stop(), "analysis_id": state.get("analysis_id"), "cpu_analysis": utils.cpu_median, "gpu_analysis": utils.gpu_median
+        "chart_config": state.get("chart_config"), "used_tools": state.get("used_tools", []) + ["analyzing_data"], "id": state.get("id"), "energy_analysis": tracker.stop(), "analysis_id": state.get("analysis_id"), "cpu_analysis": utils.cpu_mean, "gpu_analysis": utils.gpu_mean
         }
     except Exception as e:
         return {**state, "error": f"Error accessing data: {str(e)}"}
@@ -472,8 +487,20 @@ def fuse_analysis_results(results: list) -> str:
     return summary_resp
 
 CHART_CONFIGURATION_PROMPT = """
-Generate a chart configuration based on this data: {data}
-The goal is to show: {visualization_goal}
+Based on the provided data and goal, define a chart configuration using the format below:
+
+Data:
+{data}
+
+Goal:
+{visualization_goal}
+
+Respond ONLY with the following format (no explanations, no markdown):
+
+chart_type: <chart type>
+x_axis: <x-axis column>
+y_axis: <y-axis column>
+title: <chart title>
 """
 
 class VisualizationConfig(BaseModel):
@@ -483,50 +510,71 @@ class VisualizationConfig(BaseModel):
     title: str = Field(..., description="Title of the chart")
 @tracer.chain()
 def extract_chart_config(state:State) -> State:
-        # Verificar si ya tenemos datos para visualizar
+    # Verificar si ya tenemos datos para visualizar
     if "data" not in state or state["data"] is None:
         return {**state, "chart_config": None}
+
     # Verificar si ya tenemos un objetivo de visualización
-    # Verificar explícitamente si existe "visualization_goal" en el estado
-    if "visualization_goal" in state:
-        visualization_goal = state["visualization_goal"]
-    else:
-        visualization_goal = state["prompt"]
+    visualization_goal = state.get("visualization_goal", state["prompt"])
+
     formatted_prompt = CHART_CONFIGURATION_PROMPT.format(
-            data=state["data"],
-            #data = data,
-            visualization_goal=visualization_goal
+        data=state["data"],
+        visualization_goal=visualization_goal
     )
-    #print("Este es el estado a la hora de extraer la configuracion del chart: "+str(state.keys()))
+
     response = llm.invoke(formatted_prompt)
+
     try:
-        # Extract axis and title info from response
-        content = response.content
-        
-        # Return structured chart config
-        chart_config={
-        "chart_type": content.chart_type,
-        "x_axis": content.x_axis,
-        "y_axis": content.y_axis,
-        "title": content.title,
-        "data": state["data"]} 
-        print("Este es el chart config: "+str(chart_config))          
-        return{**state, 
-        "visualization_goal": state.get("visualization_goal"),
-        "chart_config": state.get("chart_config"), 
-        "analyze_data": state.get("analyze_data"), 
-        "used_tools": state.get("used_tools",[])}
-    except Exception:
-        chart_config={"chart_type": "line", 
-        "x_axis": "date",
-        "y_axis": "value",
-        "title": visualization_goal,
-        "data": state["data"]}
-        return {**state, 
-        "visualization_goal": state.get("visualization_goal"),
-        "chart_config": state.get("chart_config"), 
-        "analyze_data": state.get("analyze_data"),
-        "used_tools": state.get("used_tools",[])}
+        raw = response.content.strip()
+        #print("🧠 LLM raw response:\n", raw)
+
+        # Parse estilo "key: value"
+        config = {}
+        for line in raw.splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                config[key.strip().lower()] = value.strip()
+
+        # Validar que existan todas las claves necesarias
+        required_keys = {"chart_type", "x_axis", "y_axis", "title"}
+        if not required_keys.issubset(config.keys()):
+            raise ValueError(f"Missing keys in chart config: {config.keys()}")
+
+        # Construir configuración del gráfico
+        chart_config = {
+            "chart_type": config["chart_type"],
+            "x_axis": config["x_axis"],
+            "y_axis": config["y_axis"],
+            "title": config["title"],
+            "data": state["data"]
+        }
+        #print("✅ Chart config generado:", chart_config)
+
+        return {
+            **state,
+            "visualization_goal": visualization_goal,
+            "chart_config": chart_config,
+            "analyze_data": state.get("analyze_data"),
+            "used_tools": state.get("used_tools", [])
+        }
+
+    except Exception as e:
+        print(f"⚠️ Error extrayendo chart_config: {e}")
+        chart_config = {
+            "chart_type": "line",
+            "x_axis": "date",
+            "y_axis": "value",
+            "title": visualization_goal,
+            "data": state["data"]
+        }
+
+        return {
+            **state,
+            "visualization_goal": visualization_goal,
+            "chart_config": chart_config,
+            "analyze_data": state.get("analyze_data"),
+            "used_tools": state.get("used_tools", [])
+        }
 
 CREATE_CHART_PROMPT = """
 Write python code to create a chart based on the following configuration.
@@ -551,7 +599,7 @@ def create_visualization(state: State) -> State:
     state["ids_create_visualization"] = str(uuid.uuid4().hex[:8])
     utils = CPU_GPU_Tracker( )
     utils.start()
-    tracker = EmissionsTracker(project_name=state["ids_create_visualization"], measure_power_secs=1, log_level="critical", output_file=f"emissions_{state['id']}.csv", output_dir="10node")
+    tracker = EmissionsTracker(project_name="create_visualization",experiment_id=state["ids_create_visualization"], measure_power_secs=1, log_level="critical", output_file=f"emissions_{state['id']}_{state['ids_create_visualization']}.csv", output_dir="10node")
     tracker.start()
     try:
         config = extract_chart_config(state)
@@ -574,7 +622,7 @@ def create_visualization(state: State) -> State:
         return {**state, "config": config["chart_config"], 
             "visualization_goal": config.get("visualization_goal"),
             "chart_config": config.get("chart_config"), 
-            "analyze_data": state.get("analyze_data"), "answer": state.get("answer", []) + ["This is the code to visualize: "+code], "used_tools": state.get("used_tools", []) + ["create_visualization"], "id": state.get("id"), "energy_create_visualization": emissions, "ids_create_visualization": state.get("ids_create_visualization"), "cpu_utilization_create_visualization": utils.cpu_median, "gpu_utilization_create_visualization": utils.gpu_median}
+            "analyze_data": state.get("analyze_data"), "answer": state.get("answer", []) + ["This is the code to visualize: "+code], "used_tools": state.get("used_tools", []) + ["create_visualization"], "id": state.get("id"), "energy_create_visualization": emissions, "ids_create_visualization": state.get("ids_create_visualization"), "cpu_utilization_create_visualization": utils.cpu_mean, "gpu_utilization_create_visualization": utils.gpu_mean}
     except Exception as e:
         return {**state, "error": f"Error accessing data: {str(e)}"}
 
@@ -594,7 +642,7 @@ def decide_tool(state: State, llm) -> State:
     
     utils = CPU_GPU_Tracker(interval=0.5 )
     tool_id = str(uuid.uuid4().hex[:8])
-    tracker = EmissionsTracker(project_name=tool_id, measure_power_secs=1, log_level="critical",output_file=f"emissions_{state['id']}.csv", output_dir="10node")
+    tracker = EmissionsTracker(project_name="decide_tool", experiment_id=tool_id, measure_power_secs=1, log_level="critical",output_file=f"emissions_{state['id']}_{tool_id}.csv", output_dir="10node")
     tracker.start()
     used_tools= state.get("used_tools", [])
     tools_description = """You have access to the following tools:
@@ -688,8 +736,8 @@ def decide_tool(state: State, llm) -> State:
     emissions = tracker.stop()
     utils.stop()
     state["energy_decide_tool"].append(emissions)
-    state["cpu_utilization_decide_tool"].append(utils.cpu_median)
-    state["gpu_utilization_decide_tool"].append(utils.gpu_median)
+    state["cpu_utilization_decide_tool"].append(utils.cpu_mean)
+    state["gpu_utilization_decide_tool"].append(utils.gpu_mean)
   
     # Actualizamos el estado; registramos la herramienta elegida
     return {**state,
@@ -763,20 +811,20 @@ def log_evaluation_to_csv(
         min_len = min(len(eval_df), len(id_tool))
         for i, (index, _) in enumerate(eval_df.iterrows()):
             if i >= min_len:
-                break  # Evita desbordes si eval_df es más largo
+                break
             eval_df.at[index, "tool_name"] = tool_name
             eval_df.at[index, "id"] = id
             eval_df.at[index, "id_tool"] = id_tool[i]
             eval_df.at[index, "timestamp"] = datetime.now().isoformat()
             eval_df.at[index, "cpu_utilization"] = cpu_utilization[i] if i < len(cpu_utilization) else None
             eval_df.at[index, "gpu_utilization"] = gpu_utilization[i] if i < len(gpu_utilization) else None
-        else:
-            eval_df["tool_name"] = tool_name
-            eval_df["id"] = id
-            eval_df["id_tool"] = id_tool
-            eval_df["timestamp"] = datetime.now().isoformat()
-            eval_df["cpu_utilization"] = cpu_utilization
-            eval_df["gpu_utilization"] = gpu_utilization
+    else:
+        eval_df["tool_name"] = tool_name
+        eval_df["id"] = id
+        eval_df["id_tool"] = id_tool
+        eval_df["timestamp"] = datetime.now().isoformat()
+        eval_df["cpu_utilization"] = cpu_utilization
+        eval_df["gpu_utilization"] = gpu_utilization
 
     # === Añadir energy_kwh ===
     if isinstance(energy, list) and len(energy) == len(eval_df):
@@ -792,13 +840,14 @@ def log_evaluation_to_csv(
         eval_df[col] = None
 
     # === Caso múltiple: lista de ids ===
+    
     if isinstance(id_tool, list) and len(id_tool) == len(eval_df):
         for i, tool_id in enumerate(id_tool):
-            emissions_file = Path("10node") / f"emissions_{id}.csv"
+            emissions_file = Path("10node") / f"emissions_{id}_{tool_id}.csv"
             if emissions_file.exists():
                 try:
                     df = pd.read_csv(emissions_file)
-                    match = df[df["project_name"].astype(str).str.strip().str.lower() == str(tool_id).strip().lower()]
+                    match = df[df["experiment_id"].astype(str).str.strip().str.lower() == str(tool_id).strip().lower()]
                     if not match.empty:
                         row = match.iloc[-1]
                         mask = eval_df["id_tool"] == tool_id
@@ -806,8 +855,9 @@ def log_evaluation_to_csv(
                         eval_df.loc[mask, "gpu_energy"] = row.get("gpu_energy")
                         eval_df.loc[mask, "ram_energy"] = row.get("ram_energy")
                         eval_df.loc[mask, "emissions_rate"] = row.get("emissions_rate")
+                        eval_df.loc[mask, "execution_time"] = row.get("duration")
                     else:
-                        print(f" No match for project_name = {tool_id} in {emissions_file.name}")
+                        print(f" No match for experiment_id = {tool_id} in {emissions_file.name}")
                 except Exception as e:
                     print(f"Error leyendo emisiones para {tool_id}: {e}")
             else:
@@ -815,20 +865,21 @@ def log_evaluation_to_csv(
 
     # === Caso único: solo un id_tool ===
     elif isinstance(id_tool, str):
-        emissions_file = Path(f"emissions_{id}.csv")
+        emissions_file = Path("10node") / f"emissions_{id}_{id_tool}.csv"
         if emissions_file.exists():
             try:
                 df = pd.read_csv(emissions_file)
-                match = df[df["project_name"].astype(str).str.strip().str.lower() == str(id_tool).strip().lower()]
+                match = df[df["experiment_id"].astype(str).str.strip().str.lower() == str(id_tool).strip().lower()]
                 if not match.empty:
                     row = match.iloc[-1]
-                    mask = eval_df["id_tool"] == tool_id
+                    mask = eval_df["id_tool"] == id_tool
                     eval_df.loc[mask, "cpu_energy"] = row.get("cpu_energy")
                     eval_df.loc[mask, "gpu_energy"] = row.get("gpu_energy")
                     eval_df.loc[mask, "ram_energy"] = row.get("ram_energy")
                     eval_df.loc[mask, "emissions_rate"] = row.get("emissions_rate")
+                    eval_df.loc[mask, "execution_time"] = row.get("duration")
                 else:
-                    print(f"⚠️ No match for project_name = {id_tool} in {emissions_file.name}")
+                    print(f"⚠️ No match for experiment_id = {id_tool} in {emissions_file.name}")
             except Exception as e:
                 print(f"⚠️ Error leyendo emisiones para {id_tool}: {e}")
         else:
@@ -836,7 +887,7 @@ def log_evaluation_to_csv(
 
     # === Orden final de columnas ===
     cols_order = [
-        "tool_name", "id", "id_tool","timestamp", "execution_seconds", "score", "label", "explanation",
+        "tool_name", "id", "id_tool","timestamp", "execution_time", "score", "label", "explanation",
         "total_energy", "cpu_energy", "gpu_energy", "ram_energy", "emissions_rate",
         "cpu_utilization", "gpu_utilization"
     ]
@@ -898,7 +949,8 @@ def run_graph_with_tracing(input_state):
                     if eval_df is None or eval_df.empty:
                         print(f"Skipping {tool_name}: eval_df is empty or None")
                         continue
-
+                    if tool_name == "create_visualization":
+                        print("Este es el eval_df: "+str(eval_df))
                     log_evaluation_to_csv(
                         eval_df,
                         tool_name=tool_name,
@@ -916,9 +968,8 @@ def run_graph_with_tracing(input_state):
             span.record_exception(e)
             print("[LangGraph] Error during LangGraph execution:", e)
             raise e
-        
 
 
 
 
-    
+

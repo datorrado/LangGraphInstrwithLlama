@@ -301,53 +301,77 @@ def cast_date_columns(query: str, date_columns: list) -> str:
 def lookup_sales_data(state:State):
     """Implementation of sales data lookup from parquet file using SQL"""
     try:
-        # define the table name
         table_name = "sales"
         state["table_name"] = table_name
-        # step 1: read the parquet file into a DuckDB table
+
+        # Leer Parquet
         df = pd.read_parquet(TRANSACTION_DATA_FILE_PATH)
-        #print("Este es el dataframe: "+str(df.head()))
         duckdb.sql("DROP TABLE IF EXISTS sales")
-        duckdb.sql(f"CREATE TABLE IF NOT EXISTS {table_name} AS SELECT * FROM df")
-        # step 2: generate the SQL code 
+        duckdb.sql(f"CREATE TABLE {table_name} AS SELECT * FROM df")
+
         columns = list(df.columns)
-        state["columns"] = columns
-        #print("Estas son las columnas: "+str(columns))
         date_columns = df.select_dtypes(include=["datetime64[ns]", "datetime64[ns, UTC]"]).columns
+        state["columns"] = columns
+
+        # Ejecutar queries paralelas
         resultsdata = []
         results = list(parallel_sql_gen(state))
-        #pprint.pprint("Estos son los resultados de la paralelizacion: "+str(results))
+
         sql_list = [r[1]["sql_queries"] for r in results]
         energies = [r[1]["energy_query"] for r in results]
         ids = [r[1]["query_id"] for r in results]
         cpu_queries = [r[1]["cpu_query"] for r in results]
         gpu_queries = [r[1]["gpu_query"] for r in results]
-        # Search if there is a LIKE in da query and we cast it
-        for sql_query in sql_list:  
+
+        for sql_query in sql_list:
             sql_query = cast_date_columns(sql_query, date_columns)
             if table_name not in sql_query:
-                continue   
-            try:   
+                continue
+            try:
                 result = duckdb.sql(sql_query).df()
-                resultsdata.append(result)   
+                if not result.empty:
+                    resultsdata.append(result.head(50000))  # ✅ Limitación de filas
             except Exception:
                 continue
+
         state["energy_lookup_sales_data"] = energies
-        #resultsdata = [df.head(1000) for df in results]
+        state["ids_lookup_sales_data"] = ids
+        state["cpu_utilization_lookup_sales_data"] = cpu_queries
+        state["gpu_utilization_lookup_sales_data"] = gpu_queries
+
+        # === 🔀 Reforzado: unión segura de múltiples resultados ===
         if len(resultsdata) > 1:
             base_df = resultsdata[0]
+
             for other in resultsdata[1:]:
                 common_cols = base_df.columns.intersection(other.columns)
+
                 if not common_cols.empty:
-                    base_df = pd.merge(base_df, other, how="inner", on=list(common_cols))
+                    # 🔎 Revisión de cardinalidad
+                    merge_ok = True
+                    for col in common_cols:
+                        if base_df[col].nunique() > 1000 or other[col].nunique() > 1000:
+                            print(f"🚨 Alta cardinalidad en columna {col}, omitiendo merge")
+                            merge_ok = False
+                            break
+
+                    if merge_ok:
+                        merged = pd.merge(base_df, other, how="inner", on=list(common_cols))
+                        if len(merged) < 5000000:
+                            base_df = merged
+                        else:
+                            print("⚠️ Merge resultante demasiado grande, se omite")
+                    else:
+                        print("❌ Merge omitido por riesgo de explosión")
                 else:
-                    print("No hay columnas en común para hacer merge entre los DataFrames.")
-            
+                    print("No hay columnas comunes para hacer merge")
+
             final_result = base_df
+
         elif len(resultsdata) == 1:
             final_result = resultsdata[0]
         else:
-            final_result = pd.DataFrame()    
+            final_result = pd.DataFrame() 
         
         
         final_result = result.to_string()
@@ -796,6 +820,10 @@ graph = graph.compile()
 from pathlib import Path
 import pandas as pd
 from datetime import datetime
+from pathlib import Path
+import pandas as pd
+from datetime import datetime
+csv_lock = threading.Lock()
 
 def log_evaluation_to_csv(
     eval_df: pd.DataFrame,
@@ -803,91 +831,63 @@ def log_evaluation_to_csv(
     id: str,
     file_path: str = "tool_evaluations_5.csv",
     energy=None,
-    id_tool=None, # puede ser str o list[str]
+    id_tool=None,
     cpu_utilization=None,
     gpu_utilization=None,
 ):
-    if isinstance(id_tool, list) and isinstance(cpu_utilization, list) and isinstance(gpu_utilization, list):
-        min_len = min(len(eval_df), len(id_tool))
-        for i, (index, _) in enumerate(eval_df.iterrows()):
-            if i >= min_len:
-                break
-            eval_df.at[index, "tool_name"] = tool_name
-            eval_df.at[index, "id"] = id
-            eval_df.at[index, "id_tool"] = id_tool[i]
-            eval_df.at[index, "timestamp"] = datetime.now().isoformat()
-            eval_df.at[index, "cpu_utilization"] = cpu_utilization[i] if i < len(cpu_utilization) else None
-            eval_df.at[index, "gpu_utilization"] = gpu_utilization[i] if i < len(gpu_utilization) else None
-    else:
+    # === 🧠 Asignaciones vectorizadas rápidas ===
+    if (isinstance(id_tool, list) and len(eval_df) == len(id_tool)) or len(eval_df) == 1:
         eval_df["tool_name"] = tool_name
         eval_df["id"] = id
-        eval_df["id_tool"] = id_tool
-        eval_df["timestamp"] = datetime.now().isoformat()
-        eval_df["cpu_utilization"] = cpu_utilization
-        eval_df["gpu_utilization"] = gpu_utilization
+        eval_df["id_tool"] = id_tool if isinstance(id_tool, list) else [id_tool] * len(eval_df)
+        eval_df["cpu_utilization"] = cpu_utilization if isinstance(cpu_utilization, list) else [cpu_utilization] * len(eval_df)
+        eval_df["gpu_utilization"] = gpu_utilization if isinstance(gpu_utilization, list) else [gpu_utilization] * len(eval_df)
 
-    # === Añadir energy_kwh ===
-    if isinstance(energy, list) and len(energy) == len(eval_df):
-        eval_df["total_energy"] = energy
-        print("✅ Energy values added to DataFrame from list")
-    elif isinstance(energy, float):
-        eval_df["total_energy"] = energy
-    else:
-        eval_df["total_energy"] = None
 
-    # === Inicializar columnas energéticas ===
-    for col in ["cpu_energy", "gpu_energy", "ram_energy", "emissions_rate"]:
+    # === 🔧 Inicializar columnas de energía adicionales ===
+    for col in ["cpu_energy", "gpu_energy", "ram_energy", "emissions_rate", "execution_time", "total_energy"]:
         eval_df[col] = None
 
-    # === Caso múltiple: lista de ids ===
-    
+    # === 📁 Cargar archivos de emisiones (caso múltiple) ===
     if isinstance(id_tool, list) and len(id_tool) == len(eval_df):
         for i, tool_id in enumerate(id_tool):
             emissions_file = Path("5node") / f"emissions_{id}_{tool_id}.csv"
             if emissions_file.exists():
                 try:
-                    df = pd.read_csv(emissions_file)
-                    match = df[df["experiment_id"].astype(str).str.strip().str.lower() == str(tool_id).strip().lower()]
-                    if not match.empty:
-                        row = match.iloc[-1]
-                        mask = eval_df["id_tool"] == tool_id
-                        eval_df.loc[mask, "cpu_energy"] = row.get("cpu_energy")
-                        eval_df.loc[mask, "gpu_energy"] = row.get("gpu_energy")
-                        eval_df.loc[mask, "ram_energy"] = row.get("ram_energy")
-                        eval_df.loc[mask, "emissions_rate"] = row.get("emissions_rate")
-                        eval_df.loc[mask, "execution_time"] = row.get("duration")
-                    else:
-                        print(f" No match for experiment_id = {tool_id} in {emissions_file.name}")
-                except Exception as e:
-                    print(f"Error leyendo emisiones para {tool_id}: {e}")
-            else:
-                print(f" Archivo no encontrado: emissions_{tool_id}.csv")
-
-    # === Caso único: solo un id_tool ===
-    elif isinstance(id_tool, str):
-        emissions_file = Path("5node") / f"emissions_{id}_{id_tool}.csv"
-        if emissions_file.exists():
-            try:
-                df = pd.read_csv(emissions_file)
-                match = df[df["experiment_id"].astype(str).str.strip().str.lower() == str(id_tool).strip().lower()]
-                if not match.empty:
-                    row = match.iloc[-1]
-                    mask = eval_df["id_tool"] == id_tool
+                    row = pd.read_csv(emissions_file).iloc[0]  # ✅ Solo una fila esperada
+                    mask = eval_df["id_tool"] == tool_id
                     eval_df.loc[mask, "cpu_energy"] = row.get("cpu_energy")
                     eval_df.loc[mask, "gpu_energy"] = row.get("gpu_energy")
                     eval_df.loc[mask, "ram_energy"] = row.get("ram_energy")
                     eval_df.loc[mask, "emissions_rate"] = row.get("emissions_rate")
                     eval_df.loc[mask, "execution_time"] = row.get("duration")
-                else:
-                    print(f"⚠️ No match for experiment_id = {id_tool} in {emissions_file.name}")
+                    eval_df.loc[mask, "total_energy"] = row.get("energy_consumed")
+                    eval_df.loc[mask, "timestamp"] = row.get("timestamp")  # Añadir timestamp
+                except Exception as e:
+                    print(f"⚠️ Error leyendo emisiones para {tool_id}: {e}")
+            else:
+                print(f"⚠️ Archivo no encontrado: emissions_{id}_{tool_id}.csv")
+
+    # === 🧍 Cargar emisiones (caso único) ===
+    elif isinstance(id_tool, str):
+        emissions_file = Path("5node") / f"emissions_{id}_{id_tool}.csv"
+        if emissions_file.exists():
+            try:
+                row = pd.read_csv(emissions_file).iloc[0]
+                eval_df.loc[:, "cpu_energy"] = row.get("cpu_energy")
+                eval_df.loc[:, "gpu_energy"] = row.get("gpu_energy")
+                eval_df.loc[:, "ram_energy"] = row.get("ram_energy")
+                eval_df.loc[:, "emissions_rate"] = row.get("emissions_rate")
+                eval_df.loc[:, "execution_time"] = row.get("duration")
+                eval_df.loc[:, "total_energy"] = row.get("energy_consumed")
+                eval_df.loc[:, "timestamp"] = row.get("timestamp")  # Añadir timestamp
             except Exception as e:
                 print(f"⚠️ Error leyendo emisiones para {id_tool}: {e}")
         else:
-            print(f"⚠️ Archivo no encontrado: emissions_{id_tool}.csv")
+            print(f"⚠️ Archivo no encontrado: emissions_{id}_{id_tool}.csv")
 
-    # === Orden final de columnas ===
     cols_order = [
-        "tool_name", "id", "id_tool","timestamp", "execution_time", "score", "label", "explanation",
+        "tool_name", "id", "id_tool","timestamp", "execution_time", "score", "label",
         "total_energy", "cpu_energy", "gpu_energy", "ram_energy", "emissions_rate",
         "cpu_utilization", "gpu_utilization"
     ]
@@ -895,79 +895,113 @@ def log_evaluation_to_csv(
         if col not in eval_df.columns:
             eval_df[col] = None
     eval_df = eval_df[cols_order]
-
-    # === Guardar en CSV ===
+    # === ✅ Escritura rápida e incremental ===
     try:
-        existing = pd.read_csv(file_path)
-        combined = pd.concat([existing, eval_df], ignore_index=True)
-    except FileNotFoundError:
-        combined = eval_df
+        with csv_lock:
+            eval_df.to_csv(file_path, mode="a", header=not Path(file_path).exists(), index=False)
+        print(f"✅ Evaluación guardada en {file_path}")
+    except Exception as e:
+        print(f"❌ Error escribiendo en CSV: {e}")
 
-    combined.to_csv(file_path, index=False)
-    print(f" Evaluación guardada en {file_path}")
+import queue
+
+eval_queue = queue.Queue()
+
+def eval_worker():
+    while True:
+        args = eval_queue.get()
+        if args is None:
+            break  # Para terminar el worker si lo necesitas en el futuro
+
+        try:
+            (
+                tool_name,
+                eval_func,
+                result_id,
+                energy,
+                tool_ids,
+                cpu_util,
+                gpu_util,
+                file_path,
+            ) = args
+
+            # Ejecutar la función de evaluación
+            eval_df = eval_func(result_id)
+
+            if eval_df is not None and not eval_df.empty:
+                log_evaluation_to_csv(
+                    eval_df,
+                    tool_name=tool_name,
+                    id=result_id,
+                    energy=energy,
+                    id_tool=tool_ids,
+                    cpu_utilization=cpu_util,
+                    gpu_utilization=gpu_util,
+                    file_path=file_path,
+                )
+        except Exception as e:
+            print(f"[⚠️] Error en eval_worker para {tool_name} ({result_id}): {e}")
+
+        eval_queue.task_done()
+
+# 🧵 Iniciar el worker en segundo plano (una sola vez)
+threading.Thread(target=eval_worker, daemon=True).start()
 
 
-def run_graph_with_tracing(input_state):
+async def run_graph_with_tracing(input_state):
     print("[LangGraph] Starting LangGraph execution with tracing")
 
     with tracer.start_as_current_span("AgentRun", openinference_span_kind="agent") as span:
         span.set_attribute("debug_info", "debug_run_1")
         span.set_input(value=input_state)
 
+        result = await graph.ainvoke(input_state)
+        span.set_output(value=result.get("answer"))
+        span.set_status(StatusCode.OK)
+        print("[LangGraph] LangGraph execution completed")
+        #print("[LangGraph] Result:", result)
+        id = result.get("id")
+        id = str(id).strip()
+        #print("Este es el id: "+str(id))
+            
         try:
-            result = graph.invoke(input_state)
-            span.set_output(value=result.get("answer"))
-            span.set_status(StatusCode.OK)
-            print("[LangGraph] LangGraph execution completed")
-            #print("[LangGraph] Result:", result)
-            id = result.get("id")
-            id = str(id).strip()
-            print("Este es el id: "+str(id))
-            
-            
             tool_evals = {
-                "decide_tool": decide_tool_eval,
-                "lookup_sales_data": sql_eval,
-                "analyzing_data": analysis_eval,
-                "create_visualization": visualization_eval
-            }
+                    "decide_tool": decide_tool_eval,
+                    "lookup_sales_data": sql_eval,
+                    "analyzing_data": analysis_eval,
+                    "create_visualization": visualization_eval
+                }
 
             for tool_name, eval_func in tool_evals.items():
                 try:
                     energy_key = f"energy_{tool_name}"
                     tool_ids_key = f"ids_{tool_name}"
-                    cpu_key= f"cpu_utilization_{tool_name}"
-                    gpu_key= f"gpu_utilization_{tool_name}"
+                    cpu_key = f"cpu_utilization_{tool_name}"
+                    gpu_key = f"gpu_utilization_{tool_name}"
 
-                    # Verify both lists exist
                     if energy_key not in result or tool_ids_key not in result:
-                        print(f"Skipping {tool_name}: missing energy or ID list")
                         continue
 
-                    # Check if eval_df is None or empty
-                    eval_df = eval_func(result["id"])
-                    if eval_df is None or eval_df.empty:
-                        print(f"Skipping {tool_name}: eval_df is empty or None")
-                        continue
-                    if tool_name == "create_visualization":
-                        print("Este es el eval_df: "+str(eval_df))
-                    log_evaluation_to_csv(
-                        eval_df,
-                        tool_name=tool_name,
-                        id=result["id"],
-                        energy=result[energy_key],
-                        id_tool=result[tool_ids_key], 
-                        cpu_utilization=result[cpu_key],
-                        gpu_utilization=result[gpu_key],
-                    )
+                    eval_queue.put((
+                        tool_name,
+                        eval_func,
+                        result["id"],
+                        result[energy_key],
+                        result[tool_ids_key],
+                        result[cpu_key],
+                        result[gpu_key],
+                        "tool_evaluations_5.csv",
+                    ))
+
                 except Exception as e:
-                    print(f"Error processing {tool_name}: {e}")
+                    print(f"Error encolando evaluación {tool_name}: {e}")
             return result
         except Exception as e:
             span.set_status(StatusCode.ERROR) 
             span.record_exception(e)
             print("[LangGraph] Error during LangGraph execution:", e)
             raise e
+
 
 
 

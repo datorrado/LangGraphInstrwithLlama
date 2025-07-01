@@ -35,34 +35,27 @@ PROJECT_NAME = "evaluating-agent"
 SQL_EVAL_GEN_PROMPT = """
 SQL Evaluation Prompt:
 -----------------------
-You are tasked with determining if the SQL generated appropiately answers a given instruction
-taking into account its generated query and response.
+You are evaluating the correctness and quality of an SQL query generated in response to an instruction.
 
-Data:
------
+You must consider:
+1. Whether the SQL query syntactically makes sense and could be executed.
+2. Whether it logically addresses the instruction (i.e., filters, aggregates, or selects the right information).
+3. Whether it uses appropriate SQL constructs, column names, and structure (e.g., proper GROUP BY usage).
+4. Whether the query output would help answer the instruction.
+5. Whether the answer/result aligns with what the instruction asked for.
+
+Information provided:
 - [Instruction]: {question}
-  This section contains the specific task or problem that the sql query is intended to solve.
+- [Generated SQL]: {query_gen}
 
-- [Reference Query]: {query_gen}
-  This is the sql query submitted for evaluation. Analyze it in the context of the provided
-  instruction.
-
-Evaluation (the label of the dataframe):
+Evaluation (respond only with a label):
 -----------
-Your response should be a single word: either "correct" or "incorrect".
-You must assume that the db exists and that columns are appropiately named.
-You must take into account the response as additional information to determine the correctness.
+- Respond **only** with "correct" or "incorrect".
+- "correct" = the query is syntactically valid, logically appropriate, and solves the instruction.
+- "incorrect" = any failure in syntax, logic, or usefulness toward the instruction.
 
-- "correct" indicates that the sql query correctly solves the instruction.
-- "incorrect" indicates that the sql query correctly does not solve the instruction correctly.
+Respond only with the label: correct or incorrect.
 
-Note: Your response should contain only the word "correct" or "incorrect" with no additional text
-or characters.
-
-Explanation:
-------------------
-Your explanation should be a single sentence that provides a brief justification for your evaluation.
-It should be clear and concise, providing insight into why you believe the sql query is correct or incorrect, but don't use the same words as the evaluation.
 """
 
 # === Data Analysis Evaluation ===
@@ -113,7 +106,7 @@ tools = [
     }
 ]
 
-model = LiteLLMModel(model="ollama_chat/llama3.2:3B")
+model = LiteLLMModel(model="ollama_chat/llama3.2:3B", temperature=0.1)
 input_state = {"prompt": "Show me sales in Nov 2021"}
 
 
@@ -134,6 +127,7 @@ def decide_tool_eval(run_id):
         template=TOOL_CALLING_PROMPT_TEMPLATE.template[0].template.replace(
             "{tool_definitions}", json.dumps(tools).replace("{", '"').replace("}", '"')),
         rails=['correct', 'incorrect'],
+        provide_explanation=True,
         model=model,
         concurrency=1,
     )
@@ -168,7 +162,6 @@ def sql_eval(run_id):
                 template=SQL_EVAL_GEN_PROMPT,
                 rails=["correct", "incorrect"],
                 model=model,
-                provide_explanation=True
             )
 
         sql_eval ['score'] = sql_eval.apply(lambda x: 1 if x['label']=='correct' else 0, axis=1)
@@ -197,7 +190,6 @@ def analysis_eval(run_id):
             template=CLARITY_LLM_JUDGE_PROMPT,
             rails=["clear", "unclear"],
             model=model,
-            provide_explanation=True
         )
     clarity_eval['score'] = clarity_eval.apply(lambda x: 1 if x['label']=='clear' else 0, axis=1)
 

@@ -1,0 +1,5 @@
+tool_name,Metric,mean_value,std_value,users,nodes
+analyzing_data,Response Time,6.8871933140784,1.8464510003321033,5,3
+create_visualization,Response Time,4.320749830687419,1.3573315247921711,5,3
+decide_tool,Response Time,1.6317026695620787,0.34299643704610155,5,3
+lookup_sales_data,Response Time,2.5235897666011176,0.6684503411110458,5,3

@@ -9,25 +9,25 @@
     <hashTree>
       <kg.apc.jmeter.threads.UltimateThreadGroup guiclass="kg.apc.jmeter.threads.UltimateThreadGroupGui" testclass="kg.apc.jmeter.threads.UltimateThreadGroup" testname="jp@gc - Ultimate Thread Group">
         <collectionProp name="ultimatethreadgroupdata">
-          <collectionProp name="-462383646">
-            <stringProp name="53">5</stringProp>
+          <collectionProp name="-1242027911">
+            <stringProp name="49">1</stringProp>
             <stringProp name="48">0</stringProp>
             <stringProp name="53430">600</stringProp>
-            <stringProp name="1541058">2400</stringProp>
+            <stringProp name="1543941">2700</stringProp>
             <stringProp name="48625">100</stringProp>
           </collectionProp>
-          <collectionProp name="979975657">
-            <stringProp name="53">5</stringProp>
+          <collectionProp name="200331392">
+            <stringProp name="49">1</stringProp>
             <stringProp name="1572771">3600</stringProp>
             <stringProp name="53430">600</stringProp>
-            <stringProp name="1541058">2400</stringProp>
+            <stringProp name="1543941">2700</stringProp>
             <stringProp name="48625">100</stringProp>
           </collectionProp>
-          <collectionProp name="-1570679652">
-            <stringProp name="53">5</stringProp>
+          <collectionProp name="1944643379">
+            <stringProp name="49">1</stringProp>
             <stringProp name="1688091">7200</stringProp>
             <stringProp name="53430">600</stringProp>
-            <stringProp name="1541058">2400</stringProp>
+            <stringProp name="1543941">2700</stringProp>
             <stringProp name="48625">100</stringProp>
           </collectionProp>
         </collectionProp>
@@ -39,7 +39,8 @@
       </kg.apc.jmeter.threads.UltimateThreadGroup>
       <hashTree>
         <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="my_test_sampler">
-          <intProp name="HTTPSampler.response_timeout">240000</intProp>
+          <intProp name="HTTPSampler.connect_timeout">100000</intProp>
+          <intProp name="HTTPSampler.response_timeout">1800000</intProp>
           <stringProp name="HTTPSampler.domain">localhost</stringProp>
           <stringProp name="HTTPSampler.port">8003</stringProp>
           <stringProp name="HTTPSampler.protocol">http</stringProp>
@@ -71,22 +72,11 @@
             </collectionProp>
           </HeaderManager>
           <hashTree/>
-          <BeanShellTimer guiclass="TestBeanGUI" testclass="BeanShellTimer" testname="BeanShell Timer" enabled="false">
-            <boolProp name="resetInterpreter">false</boolProp>
-            <stringProp name="parameters"></stringProp>
-            <stringProp name="filename"></stringProp>
-            <stringProp name="script">double mean = 20; // En segundos 
-double u = Math.random(); 
-long delay = (long)(-mean * 1000 * Math.log(1 - u)); // Convertir a ms 
-log.info(&quot;Exponential delay applied &quot; + delay + &quot; ms&quot;); 
-return delay;</stringProp>
-          </BeanShellTimer>
-          <hashTree/>
           <JSR223Timer guiclass="TestBeanGUI" testclass="JSR223Timer" testname="JSR223 Timer">
             <stringProp name="cacheKey">true</stringProp>
             <stringProp name="filename"></stringProp>
             <stringProp name="parameters"></stringProp>
-            <stringProp name="script">double mean = 20; // En segundos 
+            <stringProp name="script">double mean = 40; // En segundos 
 double u = Math.random(); 
 long delay = (long)(-mean * 1000 * Math.log(1 - u)); // Convertir a ms 
 log.info(&quot;Exponential delay applied &quot; + delay + &quot; ms&quot;); 
@@ -107,7 +97,7 @@ return delay;</stringProp>
           <stringProp name="variableNames">prompt</stringProp>
         </CSVDataSet>
         <hashTree/>
-        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Ver Árbol de Resultados" enabled="true">
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="Ver Árbol de Resultados">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
@@ -144,7 +134,7 @@ return delay;</stringProp>
           <stringProp name="filename"></stringProp>
         </ResultCollector>
         <hashTree/>
-        <BackendListener guiclass="BackendListenerGui" testclass="BackendListener" testname="Backend Listener" enabled="true">
+        <BackendListener guiclass="BackendListenerGui" testclass="BackendListener" testname="Backend Listener">
           <elementProp name="arguments" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments">
             <collectionProp name="Arguments.arguments">
               <elementProp name="influxdbMetricsSender" elementType="Argument">
@@ -231,10 +221,10 @@ return delay;</stringProp>
               <connectTime>true</connectTime>
             </value>
           </objProp>
-          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\EvalResults\10Node\SummaryReport.csv</stringProp>
+          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\3Hour\1_5\SummaryReport.csv</stringProp>
         </ResultCollector>
         <hashTree/>
-        <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="Informe Agregado" enabled="true">
+        <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="Informe Agregado">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
@@ -268,10 +258,10 @@ return delay;</stringProp>
               <connectTime>true</connectTime>
             </value>
           </objProp>
-          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\EvalResults\10Node\SummaryReport.csv</stringProp>
+          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\3Hour\1_5\SummaryReport2.csv</stringProp>
         </ResultCollector>
         <hashTree/>
-        <ResultCollector guiclass="GraphVisualizer" testclass="ResultCollector" testname="Gráfico de Resultados" enabled="true">
+        <ResultCollector guiclass="GraphVisualizer" testclass="ResultCollector" testname="Gráfico de Resultados">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
@@ -308,7 +298,7 @@ return delay;</stringProp>
           <stringProp name="filename"></stringProp>
         </ResultCollector>
         <hashTree/>
-        <ResultCollector guiclass="RespTimeGraphVisualizer" testclass="ResultCollector" testname="Response Time Graph" enabled="true">
+        <ResultCollector guiclass="RespTimeGraphVisualizer" testclass="ResultCollector" testname="Response Time Graph">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
@@ -416,7 +406,7 @@ return delay;</stringProp>
               <connectTime>true</connectTime>
             </value>
           </objProp>
-          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\tests\jmeter_test\Results10.csv</stringProp>
+          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\3Hour\1_5\Results10.csv</stringProp>
         </ResultCollector>
         <hashTree/>
         <kg.apc.jmeter.vizualizers.CorrectedResultCollector guiclass="kg.apc.jmeter.vizualizers.ThreadsStateOverTimeGui" testclass="kg.apc.jmeter.vizualizers.CorrectedResultCollector" testname="jp@gc - Active Threads Over Time">
@@ -453,7 +443,7 @@ return delay;</stringProp>
               <connectTime>true</connectTime>
             </value>
           </objProp>
-          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\EvalResults\10Node\ActiveThreadsOT2.csv</stringProp>
+          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\3Hour\1_5\ActiveThreadsOT2.csv</stringProp>
           <longProp name="interval_grouping">100</longProp>
           <boolProp name="graph_aggregated">false</boolProp>
           <stringProp name="include_sample_labels"></stringProp>
@@ -498,7 +488,7 @@ return delay;</stringProp>
               <connectTime>true</connectTime>
             </value>
           </objProp>
-          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\EvalResults\10Node\ResponseTimeOverTime2.csv</stringProp>
+          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\3Hour\1_5\RespTime.csv</stringProp>
           <longProp name="interval_grouping">500</longProp>
           <boolProp name="graph_aggregated">false</boolProp>
           <stringProp name="include_sample_labels"></stringProp>
@@ -543,7 +533,7 @@ return delay;</stringProp>
               <connectTime>true</connectTime>
             </value>
           </objProp>
-          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\EvalResults\10Node\TransactionsperSec2.csv</stringProp>
+          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\3Hour\1_5\TransactionsperSec2.csv</stringProp>
           <longProp name="interval_grouping">10000</longProp>
           <boolProp name="graph_aggregated">false</boolProp>
           <stringProp name="include_sample_labels"></stringProp>
@@ -588,7 +578,7 @@ return delay;</stringProp>
               <connectTime>true</connectTime>
             </value>
           </objProp>
-          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\EvalResults\10Node\BytesThroughput.perSec2.csv</stringProp>
+          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\3Hour\1_5\BytesThroughput.perSec2.csv</stringProp>
           <longProp name="interval_grouping">1000</longProp>
           <boolProp name="graph_aggregated">false</boolProp>
           <stringProp name="include_sample_labels"></stringProp>
@@ -633,7 +623,7 @@ return delay;</stringProp>
               <connectTime>true</connectTime>
             </value>
           </objProp>
-          <stringProp name="filename"></stringProp>
+          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\3Hour\1_5\UtilizationSSHMon.csv</stringProp>
           <longProp name="interval_grouping">1000</longProp>
           <boolProp name="graph_aggregated">false</boolProp>
           <stringProp name="include_sample_labels"></stringProp>
@@ -710,7 +700,7 @@ return delay;</stringProp>
               <connectTime>true</connectTime>
             </value>
           </objProp>
-          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\EvalResults\10Node\ResultsTable.csv</stringProp>
+          <stringProp name="filename">C:\Users\david\OneDrive\Documentos\GitHub\LangGraphInstrwithLlama\3Hour\1_5\ResultsTable.csv</stringProp>
         </ResultCollector>
         <hashTree/>
       </hashTree>

@@ -1,0 +1,5 @@
+tool_name,Metric,mean_value,std_value,users,nodes
+analyzing_data,Execution Time,13.810365865679998,6.351200486964831,1,10
+create_visualization,Execution Time,4.44917307727571,1.9284654674239607,1,10
+decide_tool,Execution Time,1.7799018926422867,0.8626104919315207,1,10
+lookup_sales_data,Execution Time,3.8566852274446344,1.4460098578147178,1,10
